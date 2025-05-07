@@ -1,4 +1,4 @@
-name: Build iOS 6 IPA
+name: Build iOS 6 Compatible IPA with Validation
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-ios6:
-    name: Build iOS 6 Compatible IPA
+    name: Build and Validate IPA
     runs-on: macos-13
     
     steps:
@@ -31,17 +31,15 @@ jobs:
           sed -i '' 's/objectVersion = 77/objectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
           sed -i '' 's/preferredProjectObjectVersion = 77/preferredProjectObjectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
 
-      - name: List Available SDKs
-        run: xcodebuild -showsdks
-
-      - name: Modify Xcode Project for iOS 6
+      - name: Set Deployment Target
         run: |
-          # Create a plutil command to directly modify project.pbxproj
-          plutil -insert 'objects.PROJECTUUID.attributes.TargetAttributes.TARGETUUID.IPHONEOS_DEPLOYMENT_TARGET' -string "${{ github.event.inputs.ios_version }}" xc/CrazyCattle3D.xcodeproj/project.pbxproj || true
-          # Also try to directly modify all deployment target settings in pbxproj file
+          # Try to set deployment target directly in the project file
+          plutil -replace 'objects.*.buildSettings.IPHONEOS_DEPLOYMENT_TARGET' -string "${{ github.event.inputs.ios_version }}" xc/CrazyCattle3D.xcodeproj/project.pbxproj || true
+          
+          # Also modify through sed as a backup method
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = ${{ github.event.inputs.ios_version }};/g' xc/CrazyCattle3D.xcodeproj/project.pbxproj
 
-      - name: Archive Build (Unsigned) with iOS 6 Target
+      - name: Archive Build
         run: |
           xcodebuild clean archive \
             -project xc/CrazyCattle3D.xcodeproj \
@@ -59,39 +57,166 @@ jobs:
             ARCHS="armv7 armv7s arm64" \
             VALID_ARCHS="armv7 armv7s arm64" \
             OTHER_CFLAGS="-miphoneos-version-min=${{ github.event.inputs.ios_version }}" \
-            OTHER_LDFLAGS="-miphoneos-version-min=${{ github.event.inputs.ios_version }}" \
-            GCC_PREPROCESSOR_DEFINITIONS="$GCC_PREPROCESSOR_DEFINITIONS TARGET_OS_IPHONE_MIN_VERSION=${{ github.event.inputs.ios_version }}" || exit_code=$?
-          
-          # If the build failed with the iOS 6 target, try with the minimum supported
-          if [ ! -z "$exit_code" ]; then
-            echo "Building with iOS 6 target failed, trying with minimum supported iOS version"
-            xcodebuild clean archive \
-              -project xc/CrazyCattle3D.xcodeproj \
-              -scheme "CrazyCattle3D" \
-              -configuration Release \
-              -archivePath build/CrazyCattle3D.xcarchive \
-              -sdk iphoneos \
-              -destination 'generic/platform=iOS' \
-              ONLY_ACTIVE_ARCH=NO \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              SWIFT_OPTIMIZATION_LEVEL="-Onone" \
-              IPHONEOS_DEPLOYMENT_TARGET=9.0 \
-              GCC_PREPROCESSOR_DEFINITIONS="$GCC_PREPROCESSOR_DEFINITIONS TARGET_OS_IPHONE_MIN_VERSION=${{ github.event.inputs.ios_version }}"
-          fi
+            OTHER_LDFLAGS="-miphoneos-version-min=${{ github.event.inputs.ios_version }}"
 
-      - name: Create IPA from Archive
+      - name: Create Initial IPA
         run: |
           cp -R build/CrazyCattle3D.xcarchive/Products/Applications/CrazyCattle3D.app .
           mkdir -p Payload
           cp -R CrazyCattle3D.app Payload/
-          zip -r CrazyCattle3D-iOS6.ipa Payload
+          zip -r CrazyCattle3D-initial.ipa Payload
           rm -rf Payload CrazyCattle3D.app
 
-      - name: Upload iOS 6 Artifact
+      - name: Install validation tools
+        run: |
+          brew install unzip coreutils
+          pip3 install biplist
+
+      - name: Validate and Fix IPA Structure
+        run: |
+          # Create a directory for validation
+          mkdir -p validation
+          cd validation
+          
+          # Extract the IPA
+          unzip -q ../CrazyCattle3D-initial.ipa
+          
+          # Log the structure for debugging
+          echo "=== IPA Structure ==="
+          find Payload -type f | sort > ipa_files.txt
+          cat ipa_files.txt
+          
+          # Check for common issues
+          echo "=== Validation Checks ==="
+          
+          # 1. Check Info.plist
+          APP_DIR=$(find Payload -name "*.app" -type d | head -1)
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: No .app directory found in Payload"
+            exit 1
+          fi
+          
+          echo "App directory: $APP_DIR"
+          
+          # 2. Check Info.plist existence and format
+          if [ ! -f "$APP_DIR/Info.plist" ]; then
+            echo "ERROR: Info.plist is missing"
+            exit 1
+          else
+            echo "Info.plist exists, checking format..."
+            # Use plutil to check if Info.plist is valid
+            plutil -lint "$APP_DIR/Info.plist"
+            
+            # Extract and log minimum OS version from Info.plist
+            MIN_OS=$(plutil -extract MinimumOSVersion raw "$APP_DIR/Info.plist" 2>/dev/null || echo "Not found")
+            echo "Current MinimumOSVersion: $MIN_OS"
+            
+            # Update the MinimumOSVersion if needed
+            if [ "$MIN_OS" != "${{ github.event.inputs.ios_version }}" ]; then
+              echo "Updating MinimumOSVersion to ${{ github.event.inputs.ios_version }}..."
+              plutil -replace MinimumOSVersion -string "${{ github.event.inputs.ios_version }}" "$APP_DIR/Info.plist"
+            fi
+          fi
+          
+          # 3. Check for executable
+          EXECUTABLE_NAME=$(plutil -extract CFBundleExecutable raw "$APP_DIR/Info.plist" 2>/dev/null || echo "")
+          if [ -z "$EXECUTABLE_NAME" ]; then
+            echo "WARNING: Could not find executable name in Info.plist"
+          else
+            echo "Executable name from Info.plist: $EXECUTABLE_NAME"
+            if [ ! -f "$APP_DIR/$EXECUTABLE_NAME" ]; then
+              echo "ERROR: Executable '$EXECUTABLE_NAME' not found in app bundle"
+              # List files in app directory for debugging
+              ls -la "$APP_DIR"
+            else
+              echo "Executable exists, checking permissions..."
+              # Ensure executable has proper permissions
+              chmod +x "$APP_DIR/$EXECUTABLE_NAME"
+              
+              # Check architecture of executable
+              echo "Executable architecture:"
+              lipo -info "$APP_DIR/$EXECUTABLE_NAME" || echo "Could not determine architecture"
+            fi
+          fi
+          
+          # 4. Check for problematic files (known to cause issues)
+          PROBLEM_FILES=(
+            "ftm.dylib"
+            ".DS_Store"
+            "Contents/_CodeSignature/CodeResources"
+          )
+          
+          for FILE in "${PROBLEM_FILES[@]}"; do
+            FOUND_FILES=$(find "$APP_DIR" -name "$(basename $FILE)" 2>/dev/null)
+            if [ -n "$FOUND_FILES" ]; then
+              echo "WARNING: Potentially problematic file found: $FILE"
+              echo "Removing $FILE..."
+              find "$APP_DIR" -name "$(basename $FILE)" -delete
+            fi
+          done
+          
+          # 5. Check embedded frameworks (can cause issues)
+          if [ -d "$APP_DIR/Frameworks" ]; then
+            echo "Checking embedded frameworks..."
+            find "$APP_DIR/Frameworks" -type f -exec file {} \; | grep -v "directory"
+            
+            # Ensure framework binaries have proper permissions
+            find "$APP_DIR/Frameworks" -type f -perm +111 -exec chmod +x {} \;
+          fi
+          
+          # 6. Check for __MACOSX directory (common issue)
+          if [ -d "__MACOSX" ]; then
+            echo "Removing __MACOSX directory..."
+            rm -rf "__MACOSX"
+          fi
+          
+          # 7. Check for symbolic links (can cause issues)
+          SYMLINKS=$(find Payload -type l)
+          if [ -n "$SYMLINKS" ]; then
+            echo "WARNING: Symbolic links found, which can cause issues:"
+            echo "$SYMLINKS"
+            
+            # Replace symlinks with actual content
+            echo "Replacing symlinks with actual content..."
+            while IFS= read -r LINK; do
+              if [ -L "$LINK" ]; then
+                TARGET=$(readlink "$LINK")
+                if [ -e "$TARGET" ]; then
+                  rm "$LINK"
+                  cp -R "$TARGET" "$LINK"
+                  echo "Replaced symlink: $LINK -> $TARGET"
+                fi
+              fi
+            done <<< "$SYMLINKS"
+          fi
+          
+          # Repackage the IPA after validation and fixes
+          echo "=== Repackaging IPA after validation ==="
+          cd ..
+          rm -rf CrazyCattle3D-initial.ipa
+          cd validation
+          zip -qr ../CrazyCattle3D-validated.ipa Payload
+          cd ..
+          
+          # Check the final IPA size
+          DU_CMD=$(which gdu || which du)
+          IPA_SIZE=$($DU_CMD -h CrazyCattle3D-validated.ipa | cut -f1)
+          echo "Final IPA size: $IPA_SIZE"
+          
+          # Make a copy with the preferred name
+          cp CrazyCattle3D-validated.ipa CrazyCattle3D-iOS${{ github.event.inputs.ios_version }}.ipa
+
+      - name: Upload Validated IPA
         uses: actions/upload-artifact@v4
         with:
-          name: CrazyCattle3D-iOS6.ipa
-          path: CrazyCattle3D-iOS6.ipa
+          name: CrazyCattle3D-iOS${{ github.event.inputs.ios_version }}
+          path: validation/CrazyCattle3D-validated.ipa
+          retention-days: 90
+      
+      - name: Upload Validation Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa-validation-logs
+          path: |
+            validation/ipa_files.txt
           retention-days: 90
