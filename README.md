@@ -1,4 +1,5 @@
 # CrazyCattle3D for iOS!
+![screenshot](ScreenShot.PNG)
 
 - this is a port of the PC game CrazyCattle3D for iOS devices, port was made by [neon443](https://github.com/neon443)
 - original game was made by Anna
