@@ -6,7 +6,7 @@ on:
 jobs:
   build-with-ios6-sdk:
     name: Build with iOS 6 SDK
-    runs-on: macos-14
+    runs-on: macos-13
     
     steps:
       - name: Checkout
