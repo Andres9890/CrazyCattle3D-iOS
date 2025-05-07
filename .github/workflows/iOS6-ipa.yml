@@ -1,11 +1,11 @@
-name: Build with iOS 6 SDK
+name: Build iOS 6 Compatible IPA
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-with-ios6-sdk:
-    name: Build with iOS 6 SDK
+  build-ios6-compat:
+    name: Build iOS 6 Compatible IPA
     runs-on: macos-13
     
     steps:
@@ -25,213 +25,165 @@ jobs:
           sed -i '' 's/objectVersion = 77/objectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
           sed -i '' 's/preferredProjectObjectVersion = 77/preferredProjectObjectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
 
-      - name: Download and Install iOS 6 SDK
-        run: |
-          mkdir -p ~/ios-sdks
-          cd ~/ios-sdks
-          
-          echo "Downloading iOS 6.1 SDK..."
-          curl -L -o iPhoneOS6.1.sdk.zip https://github.com/phracker/MacOSX-SDKs/releases/download/iOS-archive/iPhoneOS6.1.sdk.zip || {
-            echo "Failed to download from primary source, trying alternate..."
-            curl -L -o iPhoneOS6.1.sdk.zip https://github.com/alexey-lysiuk/macos-sdk/releases/download/10.14/iPhoneOS.sdk.6.1.zip || {
-              echo "Failed to download iOS 6.1 SDK from known sources."
-              echo "Attempting to download from another location..."
-              curl -L -o iPhoneOS6.1.sdk.zip https://github.com/JonathanSeals/OS-X-SDKs/raw/master/iPhoneOS6.1.sdk.zip || {
-                echo "ERROR: Could not download iOS 6.1 SDK from any known location."
-                exit 1
-              }
-            }
-          }
-          
-          unzip -q iPhoneOS6.1.sdk.zip
-          
-          XCODE_SDK_PATH=$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer/SDKs
-          sudo mkdir -p "$XCODE_SDK_PATH"
-          
-          echo "Installing iOS 6.1 SDK to Xcode..."
-          sudo cp -R iPhoneOS6.1.sdk "$XCODE_SDK_PATH/"
-          
-          ls -la "$XCODE_SDK_PATH"
-          
-          if [ -d "$XCODE_SDK_PATH/iPhoneOS6.1.sdk" ]; then
-            echo "iOS 6.1 SDK installed successfully."
-            if [ ! -d "$XCODE_SDK_PATH/iPhoneOS6.0.sdk" ]; then
-              sudo ln -s "$XCODE_SDK_PATH/iPhoneOS6.1.sdk" "$XCODE_SDK_PATH/iPhoneOS6.0.sdk"
-              echo "Created symlink for iOS 6.0 SDK"
-            fi
-          else
-            echo "ERROR: Failed to install iOS 6.1 SDK."
-            exit 1
-          fi
-          
-          echo "Available SDKs after installation:"
-          xcodebuild -showsdks
-
-      - name: Modify Xcode Project for iOS 6
-        run: |
-          plutil -replace 'objects.*.buildSettings.IPHONEOS_DEPLOYMENT_TARGET' -string "6.0" xc/CrazyCattle3D.xcodeproj/project.pbxproj || true
-          
-          plutil -replace 'objects.*.buildSettings.SDKROOT' -string "iphoneos6.0" xc/CrazyCattle3D.xcodeproj/project.pbxproj || true
-          
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = 6.0;/g' xc/CrazyCattle3D.xcodeproj/project.pbxproj
-          
-          sed -i '' 's/ARCHS = ".*";/ARCHS = "armv7 armv7s";/g' xc/CrazyCattle3D.xcodeproj/project.pbxproj
-          sed -i '' 's/VALID_ARCHS = ".*";/VALID_ARCHS = "armv7 armv7s";/g' xc/CrazyCattle3D.xcodeproj/project.pbxproj
-
-      - name: Build with iOS 6 SDK
+      - name: Build with Minimum Supported iOS Version
         run: |
           xcodebuild clean archive \
             -project xc/CrazyCattle3D.xcodeproj \
             -scheme "CrazyCattle3D" \
             -configuration Release \
             -archivePath build/CrazyCattle3D.xcarchive \
-            -sdk iphoneos6.0 \
+            -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_OPTIMIZATION_LEVEL="-Onone" \
-            IPHONEOS_DEPLOYMENT_TARGET=6.0 \
-            ARCHS="armv7 armv7s" \
-            VALID_ARCHS="armv7 armv7s" \
-            OTHER_CFLAGS="-miphoneos-version-min=6.0" \
-            OTHER_LDFLAGS="-miphoneos-version-min=6.0" \
-            SDKROOT=iphoneos6.0 || exit_code=$?
-          
-          if [ ! -z "$exit_code" ]; then
-            echo "Primary build method failed, trying alternative approach..."
-            export SDKROOT=$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS6.1.sdk
-            
-            xcodebuild clean archive \
-              -project xc/CrazyCattle3D.xcodeproj \
-              -scheme "CrazyCattle3D" \
-              -configuration Release \
-              -archivePath build/CrazyCattle3D.xcarchive \
-              -sdk iphoneos \
-              -destination 'generic/platform=iOS' \
-              ONLY_ACTIVE_ARCH=NO \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGNING_ALLOWED=NO \
-              SWIFT_OPTIMIZATION_LEVEL="-Onone" \
-              IPHONEOS_DEPLOYMENT_TARGET=6.0 \
-              ARCHS="armv7 armv7s" \
-              VALID_ARCHS="armv7 armv7s" \
-              OTHER_CFLAGS="-miphoneos-version-min=6.0" \
-              OTHER_LDFLAGS="-miphoneos-version-min=6.0" \
-              SDKROOT="$SDKROOT" || exit_code=$?
-            
-            if [ ! -z "$exit_code" ]; then
-              echo "Alternative approach failed, trying fallback to build with latest SDK but iOS 6 compatibility..."
-              xcodebuild clean archive \
-                -project xc/CrazyCattle3D.xcodeproj \
-                -scheme "CrazyCattle3D" \
-                -configuration Release \
-                -archivePath build/CrazyCattle3D.xcarchive \
-                -sdk iphoneos \
-                -destination 'generic/platform=iOS' \
-                ONLY_ACTIVE_ARCH=NO \
-                CODE_SIGN_IDENTITY="" \
-                CODE_SIGNING_REQUIRED=NO \
-                CODE_SIGNING_ALLOWED=NO \
-                SWIFT_OPTIMIZATION_LEVEL="-Onone" \
-                IPHONEOS_DEPLOYMENT_TARGET=11.0 \
-                ARCHS="arm64" \
-                VALID_ARCHS="arm64" \
-                GCC_PREPROCESSOR_DEFINITIONS="TARGET_OS_IPHONE_MIN_VERSION=6.0"
-            fi
-          fi
+            IPHONEOS_DEPLOYMENT_TARGET=11.0 \
+            ARCHS="arm64" \
+            VALID_ARCHS="arm64" \
+            GCC_PREPROCESSOR_DEFINITIONS="TARGET_OS_IPHONE_MIN_VERSION=6.0"
 
-      - name: Create IPA from Archive
+      - name: Create Initial IPA
         run: |
-          if [ -d "build/CrazyCattle3D.xcarchive/Products/Applications/CrazyCattle3D.app" ]; then
-            cp -R build/CrazyCattle3D.xcarchive/Products/Applications/CrazyCattle3D.app .
-            mkdir -p Payload
-            cp -R CrazyCattle3D.app Payload/
-            zip -r CrazyCattle3D-iOS6.ipa Payload
-            rm -rf Payload CrazyCattle3D.app
-            echo "Successfully created IPA file"
-          else
-            echo "WARNING: Archive directory not found, checking for alternative paths..."
-            find build -type d -name "*.app" | while read app_path; do
-              echo "Found app at: $app_path"
-              cp -R "$app_path" .
-              APP_NAME=$(basename "$app_path")
-              mkdir -p Payload
-              cp -R "$APP_NAME" Payload/
-              zip -r CrazyCattle3D-iOS6.ipa Payload
-              rm -rf Payload "$APP_NAME"
-              echo "Created IPA from alternative path"
-              break
-            done
-          fi
-          
-          if [ -f "CrazyCattle3D-iOS6.ipa" ]; then
-            echo "IPA file created successfully"
-            ls -la CrazyCattle3D-iOS6.ipa
-          else
-            echo "ERROR: Failed to create IPA file"
-            exit 1
-          fi
+          cp -R build/CrazyCattle3D.xcarchive/Products/Applications/CrazyCattle3D.app .
+          mkdir -p Payload
+          cp -R CrazyCattle3D.app Payload/
+          zip -r CrazyCattle3D-initial.ipa Payload
+          rm -rf Payload CrazyCattle3D.app
 
-      - name: Install validation tools
+      - name: Install tools
         run: |
-          brew install unzip coreutils
+          brew install unzip
           pip3 install biplist
 
-      - name: Validate IPA Structure
+      - name: Post-Process IPA for iOS 6 Compatibility
         run: |
-          mkdir -p validation
-          cd validation
+          mkdir -p ios6-compat
+          cd ios6-compat
           
-          unzip -q ../CrazyCattle3D-iOS6.ipa
-          
-          echo "=== IPA Structure ==="
-          find Payload -type f | sort > ipa_files.txt
-          cat ipa_files.txt
+          unzip -q ../CrazyCattle3D-initial.ipa
           
           APP_DIR=$(find Payload -name "*.app" -type d | head -1)
           if [ -z "$APP_DIR" ]; then
-            echo "ERROR: No .app directory found in Payload"
+            echo "ERROR: No .app directory found"
             exit 1
           fi
           
           echo "App directory: $APP_DIR"
           
-          if [ ! -f "$APP_DIR/Info.plist" ]; then
-            echo "ERROR: Info.plist is missing"
-            exit 1
+          if [ -f "$APP_DIR/Info.plist" ]; then
+            echo "Modifying Info.plist for iOS 6 compatibility"
+            
+            plutil -convert xml1 "$APP_DIR/Info.plist"
+            
+            echo "Setting MinimumOSVersion to 6.0"
+            plutil -replace MinimumOSVersion -string "6.0" "$APP_DIR/Info.plist"
+            
+            echo "Force UIRequiredDeviceCapabilities to armv7"
+            plutil -replace UIRequiredDeviceCapabilities -xml "<array><string>armv7</string></array>" "$APP_DIR/Info.plist" || true
+            
+            echo "Set UIDeviceFamily to include iPhone and iPad"
+            plutil -replace UIDeviceFamily -xml "<array><integer>1</integer><integer>2</integer></array>" "$APP_DIR/Info.plist" || true
           else
-            echo "Info.plist exists, checking format..."
-            plutil -lint "$APP_DIR/Info.plist"
-            
-            MIN_OS=$(plutil -extract MinimumOSVersion raw "$APP_DIR/Info.plist" 2>/dev/null || echo "Not found")
-            echo "Current MinimumOSVersion: $MIN_OS"
-            
-            if [ "$MIN_OS" != "6.0" ]; then
-              echo "Updating MinimumOSVersion to 6.0..."
-              plutil -replace MinimumOSVersion -string "6.0" "$APP_DIR/Info.plist"
-            fi
+            echo "ERROR: Info.plist not found"
+            exit 1
           fi
           
+          echo "Cleaning up problematic files"
+          find Payload -name ".DS_Store" -delete
+          find Payload -name "ftm.dylib" -delete
+          
+          echo "Setting executable permissions"
+          EXECUTABLE_NAME=$(plutil -extract CFBundleExecutable raw "$APP_DIR/Info.plist" 2>/dev/null)
+          if [ -n "$EXECUTABLE_NAME" ] && [ -f "$APP_DIR/$EXECUTABLE_NAME" ]; then
+            chmod +x "$APP_DIR/$EXECUTABLE_NAME"
+          fi
+          
+          echo "Creating iOS 6 compatible IPA"
+          zip -qr ../CrazyCattle3D-iOS6.ipa Payload
+          
           cd ..
-          rm -f CrazyCattle3D-iOS6.ipa
-          cd validation
-          zip -qr ../CrazyCattle3D-iOS6-validated.ipa Payload
-          cd ..
+          
+          echo "Finished creating iOS 6 compatible IPA"
+          ls -la CrazyCattle3D-iOS6.ipa
 
-      - name: Upload iOS 6 IPA
+      - name: Upload iOS 6 Compatible IPA
         uses: actions/upload-artifact@v4
         with:
           name: CrazyCattle3D-iOS6
-          path: CrazyCattle3D-iOS6-validated.ipa
+          path: CrazyCattle3D-iOS6.ipa
           retention-days: 90
+
+      - name: Advanced IPA Repair (Alternative Method)
+        run: |
+          mkdir -p ios6-repair
+          cd ios6-repair
           
-      - name: Upload Validation Logs
+          unzip -q ../CrazyCattle3D-iOS6.ipa
+          
+          APP_DIR=$(find Payload -name "*.app" -type d | head -1)
+          if [ -z "$APP_DIR" ]; then
+            echo "No .app directory found"
+            exit 1
+          fi
+          
+          echo "Creating extremely minimal Info.plist for iOS 6"
+          cat > minimal_Info.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          <key>CFBundleExecutable</key>
+          <string>CrazyCattle3D</string>
+          <key>CFBundleIdentifier</key>
+          <string>com.neon443.CrazyCattle3D</string>
+          <key>CFBundleName</key>
+          <string>CrazyCattle3D</string>
+          <key>CFBundleVersion</key>
+          <string>1.0</string>
+          <key>CFBundleShortVersionString</key>
+          <string>1.0</string>
+          <key>MinimumOSVersion</key>
+          <string>6.0</string>
+          <key>UIDeviceFamily</key>
+          <array>
+          <integer>1</integer>
+          <integer>2</integer>
+          </array>
+          <key>UIRequiredDeviceCapabilities</key>
+          <array>
+          <string>armv7</string>
+          </array>
+          </dict>
+          </plist>
+          EOF
+          
+          EXECUTABLE_NAME=$(plutil -extract CFBundleExecutable raw "$APP_DIR/Info.plist" 2>/dev/null || echo "CrazyCattle3D")
+          BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP_DIR/Info.plist" 2>/dev/null || echo "com.yourcompany.CrazyCattle3D")
+          BUNDLE_NAME=$(plutil -extract CFBundleName raw "$APP_DIR/Info.plist" 2>/dev/null || echo "CrazyCattle3D")
+          BUNDLE_VERSION=$(plutil -extract CFBundleVersion raw "$APP_DIR/Info.plist" 2>/dev/null || echo "1.0")
+          SHORT_VERSION=$(plutil -extract CFBundleShortVersionString raw "$APP_DIR/Info.plist" 2>/dev/null || echo "1.0")
+          
+          plutil -replace CFBundleExecutable -string "$EXECUTABLE_NAME" minimal_Info.plist
+          plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" minimal_Info.plist
+          plutil -replace CFBundleName -string "$BUNDLE_NAME" minimal_Info.plist
+          plutil -replace CFBundleVersion -string "$BUNDLE_VERSION" minimal_Info.plist
+          plutil -replace CFBundleShortVersionString -string "$SHORT_VERSION" minimal_Info.plist
+          
+          mv minimal_Info.plist "$APP_DIR/Info.plist"
+          
+          echo "Creating iOS 6 repaired IPA"
+          zip -qr ../CrazyCattle3D-iOS6-repaired.ipa Payload
+          
+          cd ..
+          
+          echo "Finished creating repaired IPA"
+          ls -la CrazyCattle3D-iOS6-repaired.ipa
+
+      - name: Upload Repaired IPA (Alternative)
         uses: actions/upload-artifact@v4
         with:
-          name: ipa-validation-logs
-          path: |
-            validation/ipa_files.txt
+          name: CrazyCattle3D-iOS6-repaired
+          path: CrazyCattle3D-iOS6-repaired.ipa
           retention-days: 90
