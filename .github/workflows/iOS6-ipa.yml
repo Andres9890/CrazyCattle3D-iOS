@@ -1,4 +1,4 @@
-name: Build iOS 6 Compatible IPA
+name: Build iOS 6 IPA
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
 jobs:
   build-ios6:
     name: Build iOS 6 Compatible IPA
-    runs-on: macos-14
+    runs-on: macos-13
     
     steps:
       - name: Checkout
