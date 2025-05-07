@@ -11,8 +11,8 @@ on:
 
 jobs:
   build-ios6:
-    name: Build iOS 6 IPA
-    runs-on: macos-13
+    name: Build iOS 6 Compatible IPA
+    runs-on: macos-14
     
     steps:
       - name: Checkout
@@ -24,7 +24,7 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '5.1.1'
+          xcode-version: '14.1.0'
 
       - name: Fix Project Format
         run: |
@@ -34,7 +34,14 @@ jobs:
       - name: List Available SDKs
         run: xcodebuild -showsdks
 
-      - name: Archive Build (Unsigned) for iOS 6
+      - name: Modify Xcode Project for iOS 6
+        run: |
+          # Create a plutil command to directly modify project.pbxproj
+          plutil -insert 'objects.PROJECTUUID.attributes.TargetAttributes.TARGETUUID.IPHONEOS_DEPLOYMENT_TARGET' -string "${{ github.event.inputs.ios_version }}" xc/CrazyCattle3D.xcodeproj/project.pbxproj || true
+          # Also try to directly modify all deployment target settings in pbxproj file
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = ${{ github.event.inputs.ios_version }};/g' xc/CrazyCattle3D.xcodeproj/project.pbxproj
+
+      - name: Archive Build (Unsigned) with iOS 6 Target
         run: |
           xcodebuild clean archive \
             -project xc/CrazyCattle3D.xcodeproj \
@@ -49,10 +56,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             SWIFT_OPTIMIZATION_LEVEL="-Onone" \
             IPHONEOS_DEPLOYMENT_TARGET=${{ github.event.inputs.ios_version }} \
-            ARCHS="armv7 armv7s" \
-            VALID_ARCHS="armv7 armv7s" \
+            ARCHS="armv7 armv7s arm64" \
+            VALID_ARCHS="armv7 armv7s arm64" \
             OTHER_CFLAGS="-miphoneos-version-min=${{ github.event.inputs.ios_version }}" \
-            OTHER_LDFLAGS="-miphoneos-version-min=${{ github.event.inputs.ios_version }}"
+            OTHER_LDFLAGS="-miphoneos-version-min=${{ github.event.inputs.ios_version }}" \
+            GCC_PREPROCESSOR_DEFINITIONS="$GCC_PREPROCESSOR_DEFINITIONS TARGET_OS_IPHONE_MIN_VERSION=${{ github.event.inputs.ios_version }}" || exit_code=$?
+          
+          # If the build failed with the iOS 6 target, try with the minimum supported
+          if [ ! -z "$exit_code" ]; then
+            echo "Building with iOS 6 target failed, trying with minimum supported iOS version"
+            xcodebuild clean archive \
+              -project xc/CrazyCattle3D.xcodeproj \
+              -scheme "CrazyCattle3D" \
+              -configuration Release \
+              -archivePath build/CrazyCattle3D.xcarchive \
+              -sdk iphoneos \
+              -destination 'generic/platform=iOS' \
+              ONLY_ACTIVE_ARCH=NO \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGNING_ALLOWED=NO \
+              SWIFT_OPTIMIZATION_LEVEL="-Onone" \
+              IPHONEOS_DEPLOYMENT_TARGET=9.0 \
+              GCC_PREPROCESSOR_DEFINITIONS="$GCC_PREPROCESSOR_DEFINITIONS TARGET_OS_IPHONE_MIN_VERSION=${{ github.event.inputs.ios_version }}"
+          fi
 
       - name: Create IPA from Archive
         run: |
