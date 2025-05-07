@@ -23,13 +23,13 @@ jobs:
 
       - name: Fix Project Format
         run: |
-          sed -i '' 's/objectVersion = 77/objectVersion = 56/' CrazyCattle3D.xcodeproj/project.pbxproj
-          sed -i '' 's/preferredProjectObjectVersion = 77/preferredProjectObjectVersion = 56/' CrazyCattle3D.xcodeproj/project.pbxproj
+          sed -i '' 's/objectVersion = 77/objectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
+          sed -i '' 's/preferredProjectObjectVersion = 77/preferredProjectObjectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
 
       - name: Archive Build (Unsigned)
         run: |
           xcodebuild clean archive \
-            -project CrazyCattle3D.xcodeproj \
+            -project xc/CrazyCattle3D.xcodeproj \
             -scheme "CrazyCattle3D" \
             -configuration Release \
             -archivePath build/CrazyCattle3D.xcarchive \
