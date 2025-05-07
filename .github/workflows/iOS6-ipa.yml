@@ -12,7 +12,7 @@ on:
 jobs:
   build-ios6:
     name: Build iOS 6 IPA
-    runs-on: macos-12
+    runs-on: macos-13
     
     steps:
       - name: Checkout
