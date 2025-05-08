@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-ios6-compatible:
+  build-ios6-compat:
     name: Build iOS 6 IPA
     runs-on: macos-13
     
@@ -20,136 +20,13 @@ jobs:
         with:
           xcode-version: '14.1.0'
 
-      - name: Fix Project Format
+      - name: Fix Project Format (Minimal Change)
         run: |
+          # Only fix the objectVersion which is needed for the project to open
           sed -i '' 's/objectVersion = 77/objectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
           sed -i '' 's/preferredProjectObjectVersion = 77/preferredProjectObjectVersion = 56/' xc/CrazyCattle3D.xcodeproj/project.pbxproj
 
-      - name: Modify Project for Backward Compatibility
-        run: |
-          echo "Setting deployment target and weak linking frameworks..."
-          
-          PROJ_FILE="xc/CrazyCattle3D.xcodeproj/project.pbxproj"
-          
-          # 1. Set deployment target to iOS 6.0
-          plutil -replace 'objects.*.buildSettings.IPHONEOS_DEPLOYMENT_TARGET' -string "6.0" "$PROJ_FILE" || true
-          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9]*\.[0-9]*;/IPHONEOS_DEPLOYMENT_TARGET = 6.0;/g' "$PROJ_FILE"
-          
-          # 2. Set Base SDK to latest
-          plutil -replace 'objects.*.buildSettings.SDKROOT' -string "iphoneos" "$PROJ_FILE" || true
-          
-          # 3. Set architectures to include armv7 for iOS 6 support alongside arm64
-          # Note: Modern Xcode will likely reject armv7, so we keep arm64 as primary
-          plutil -replace 'objects.*.buildSettings.ARCHS' -string "$(ARCHS_STANDARD)" "$PROJ_FILE" || true
-          
-          # 4. Add preprocessor definition for runtime API checking
-          sed -i '' 's/GCC_PREPROCESSOR_DEFINITIONS = /GCC_PREPROCESSOR_DEFINITIONS = "TARGET_OS_IOS_MIN_VERSION=6000000 WEAK_LINK_NEWER_APIS=1 "/g' "$PROJ_FILE"
-          
-          # 5. Create a helper header for backward compatibility
-          mkdir -p xc/CrazyCattle3D/BackwardCompatibility
-          
-          cat > xc/CrazyCattle3D/BackwardCompatibility/IOSCompatibility.h << 'EOF'
-          #ifndef IOSCompatibility_h
-          #define IOSCompatibility_h
-          
-          #import <Foundation/Foundation.h>
-          #import <UIKit/UIKit.h>
-          
-          // Check iOS version at runtime
-          #define SYSTEM_VERSION_EQUAL_TO(v)                  ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] == NSOrderedSame)
-          #define SYSTEM_VERSION_GREATER_THAN(v)              ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] == NSOrderedDescending)
-          #define SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(v)  ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] != NSOrderedAscending)
-          #define SYSTEM_VERSION_LESS_THAN(v)                 ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] == NSOrderedAscending)
-          #define SYSTEM_VERSION_LESS_THAN_OR_EQUAL_TO(v)     ([[[UIDevice currentDevice] systemVersion] compare:v options:NSNumericSearch] != NSOrderedDescending)
-          
-          // iOS Availability checks - runtime alternatives to @available 
-          static inline BOOL iOS7Available() {
-              return SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"7.0");
-          }
-          
-          static inline BOOL iOS8Available() {
-              return SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0");
-          }
-          
-          static inline BOOL iOS9Available() {
-              return SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"9.0");
-          }
-          
-          static inline BOOL iOS10Available() {
-              return SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"10.0");
-          }
-          
-          static inline BOOL iOS11Available() {
-              return SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"11.0");
-          }
-          
-          // Safe API access helpers
-          
-          // Safe class access - returns Class if available, nil if not
-          static inline Class GetClassIfAvailable(NSString *className) {
-              return NSClassFromString(className);
-          }
-          
-          // Check if a class responds to a selector
-          static inline BOOL ClassImplementsSelector(Class cls, SEL selector) {
-              return cls && [cls respondsToSelector:selector];
-          }
-          
-          // Check if an object responds to a selector
-          static inline BOOL ObjectImplementsSelector(id obj, SEL selector) {
-              return obj && [obj respondsToSelector:selector];
-          }
-          
-          #endif /* IOSCompatibility_h */
-          EOF
-          
-          # 6. Create a helper implementation file
-          cat > xc/CrazyCattle3D/BackwardCompatibility/IOSCompatibility.m << 'EOF'
-          #import "IOSCompatibility.h"
-          
-          // Add any implementations needed for compatibility helpers here
-          
-          EOF
-          
-          # 7. Create a UIKit extensions file for safe API access
-          cat > xc/CrazyCattle3D/BackwardCompatibility/UIKitExtensions.h << 'EOF'
-          #ifndef UIKitExtensions_h
-          #define UIKitExtensions_h
-          
-          #import <UIKit/UIKit.h>
-          #import "IOSCompatibility.h"
-          
-          // Safe accessing of UIKit APIs that differ between iOS versions
-          
-          // Safe edge insets - uses safeAreaInsets on iOS 11+, or provides fallbacks for earlier versions
-          static inline UIEdgeInsets GetSafeAreaInsets(UIView *view) {
-              if (iOS11Available() && ObjectImplementsSelector(view, @selector(safeAreaInsets))) {
-                  return [view performSelector:@selector(safeAreaInsets)];
-              } else {
-                  // Pre-iOS 11 fallback
-                  UIEdgeInsets insets = UIEdgeInsetsZero;
-                  if (iOS7Available()) {
-                      // Use topLayoutGuide and bottomLayoutGuide if in a view controller
-                      // This is simplified - in real code you'd need the actual view controller
-                      insets.top = 20; // Status bar height on pre-X devices
-                      
-                      // Check if we have a nav bar or tab bar and adjust accordingly
-                      // This simplified version just provides a basic fallback
-                  }
-                  return insets;
-              }
-          }
-          
-          // More helper functions could be added here for other UIKit APIs that changed
-          
-          #endif /* UIKitExtensions_h */
-          EOF
-          
-          # Import these files into the project manually if needed
-          # echo 'Adding compatibility files to the project...'
-          # This would require more complex pbxproj manipulation
-
-      - name: Build with Backward Compatibility
+      - name: Build with Default Settings
         run: |
           xcodebuild clean archive \
             -project xc/CrazyCattle3D.xcodeproj \
@@ -162,29 +39,30 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            SWIFT_OPTIMIZATION_LEVEL="-Onone" \
-            IPHONEOS_DEPLOYMENT_TARGET=11.0 \
-            OTHER_CFLAGS="-miphoneos-version-min=6.0" \
-            OTHER_LDFLAGS="-weak_framework UIKit -weak_framework Foundation -weak_framework CoreGraphics -weak_framework QuartzCore -weak_framework CoreImage -weak_framework AVFoundation -weak_framework AudioToolbox -weak_framework SystemConfiguration" \
-            GCC_PREPROCESSOR_DEFINITIONS="TARGET_OS_IOS_MIN_VERSION=6000000 WEAK_LINK_NEWER_APIS=1" \
-            ARCHS="arm64" \
-            VALID_ARCHS="arm64"
+            SWIFT_OPTIMIZATION_LEVEL="-Onone"
 
-      - name: Create IPA
+      - name: Create Initial IPA
         run: |
           cp -R build/CrazyCattle3D.xcarchive/Products/Applications/CrazyCattle3D.app .
           mkdir -p Payload
           cp -R CrazyCattle3D.app Payload/
-          zip -r CrazyCattle3D-iOS6-compatible.ipa Payload
+          zip -r CrazyCattle3D-initial.ipa Payload
           rm -rf Payload CrazyCattle3D.app
 
-      - name: Enhance IPA for iOS 6
+      - name: Install tools
         run: |
-          mkdir -p enhance
-          cd enhance
+          brew install unzip
+          pip3 install biplist
+
+      - name: Process IPA for iOS 6 Compatibility
+        run: |
+          mkdir -p ios6-compat
+          cd ios6-compat
           
-          unzip -q ../CrazyCattle3D-iOS6-compatible.ipa
+          # Extract the IPA
+          unzip -q ../CrazyCattle3D-initial.ipa
           
+          # Find the .app directory
           APP_DIR=$(find Payload -name "*.app" -type d | head -1)
           if [ -z "$APP_DIR" ]; then
             echo "ERROR: No .app directory found"
@@ -193,49 +71,150 @@ jobs:
           
           echo "App directory: $APP_DIR"
           
+          # Modify Info.plist for iOS 6
           if [ -f "$APP_DIR/Info.plist" ]; then
-            echo "Enhancing Info.plist for iOS 6 compatibility"
+            echo "Backing up original Info.plist"
+            cp "$APP_DIR/Info.plist" "$APP_DIR/Info.plist.bak"
             
+            echo "Modifying Info.plist for iOS 6 compatibility"
+            
+            # Convert to XML for easier editing
+            plutil -convert xml1 "$APP_DIR/Info.plist"
+            
+            # Read the current MinimumOSVersion
+            CURRENT_MIN_OS=$(plutil -extract MinimumOSVersion raw "$APP_DIR/Info.plist" 2>/dev/null || echo "Unknown")
+            echo "Current MinimumOSVersion: $CURRENT_MIN_OS"
+            
+            # Set MinimumOSVersion to 6.0
             plutil -replace MinimumOSVersion -string "6.0" "$APP_DIR/Info.plist"
-            plutil -replace DTSDKName -string "iphoneos6.0" "$APP_DIR/Info.plist" || true
             
-            echo "Setting UIRequiredDeviceCapabilities for older devices"
+            # Set UIRequiredDeviceCapabilities for older devices 
             plutil -replace UIRequiredDeviceCapabilities -xml "<array><string>armv7</string></array>" "$APP_DIR/Info.plist" || true
             
-            echo "Setting LSRequiresIPhoneOS to ensure compatibility"
-            plutil -replace LSRequiresIPhoneOS -bool YES "$APP_DIR/Info.plist" || true
-            
-            echo "Adding iOS 6 compatibility keys"
-            plutil -replace UIDeviceFamily -xml "<array><integer>1</integer><integer>2</integer></array>" "$APP_DIR/Info.plist" || true
-            plutil -replace UIStatusBarHidden -bool NO "$APP_DIR/Info.plist" || true
-            plutil -replace UIViewControllerBasedStatusBarAppearance -bool NO "$APP_DIR/Info.plist" || true
-            
-            echo "Removing potentially problematic keys"
+            # Remove potentially problematic keys
             plutil -remove UIApplicationSceneManifest "$APP_DIR/Info.plist" || true
             plutil -remove NSUserActivityTypes "$APP_DIR/Info.plist" || true
             
-            echo "Checking final Info.plist"
-            plutil -p "$APP_DIR/Info.plist"
+            # Add iOS 6 compatibility keys
+            plutil -replace UIDeviceFamily -xml "<array><integer>1</integer><integer>2</integer></array>" "$APP_DIR/Info.plist" || true
+            plutil -replace LSRequiresIPhoneOS -bool YES "$APP_DIR/Info.plist" || true
+            
+            echo "Info.plist modified for iOS 6 compatibility"
           else
             echo "ERROR: Info.plist not found"
             exit 1
           fi
           
-          echo "Creating enhanced iOS 6 compatible IPA"
-          zip -qr ../CrazyCattle3D-iOS6-enhanced.ipa Payload
+          # Remove any problematic files
+          echo "Cleaning up potentially problematic files"
+          find Payload -name ".DS_Store" -delete
+          find Payload -name "ftm.dylib" -delete
           
+          # Set necessary permissions
+          echo "Setting executable permissions"
+          EXECUTABLE_NAME=$(plutil -extract CFBundleExecutable raw "$APP_DIR/Info.plist" 2>/dev/null)
+          if [ -n "$EXECUTABLE_NAME" ] && [ -f "$APP_DIR/$EXECUTABLE_NAME" ]; then
+            chmod +x "$APP_DIR/$EXECUTABLE_NAME"
+            echo "Set executable permissions for $EXECUTABLE_NAME"
+          fi
+          
+          # Create the iOS 6 compatible IPA
           cd ..
+          rm -rf CrazyCattle3D-iOS6.ipa
+          cd ios6-compat
+          echo "Creating iOS 6 compatible IPA"
+          zip -qr ../CrazyCattle3D-iOS6.ipa Payload
+          cd ..
+          
+          echo "Finished creating iOS 6 compatible IPA"
+          ls -la CrazyCattle3D-iOS6.ipa
+
+      - name: Create Alternative IPA with Minimal Info.plist
+        run: |
+          mkdir -p ios6-minimal
+          cd ios6-minimal
+          
+          # Extract the IPA again
+          unzip -q ../CrazyCattle3D-initial.ipa
+          
+          # Find the .app directory
+          APP_DIR=$(find Payload -name "*.app" -type d | head -1)
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: No .app directory found"
+            exit 1
+          fi
+          
+          # Get essential info from the original Info.plist
+          EXECUTABLE_NAME=$(plutil -extract CFBundleExecutable raw "$APP_DIR/Info.plist" 2>/dev/null || echo "CrazyCattle3D")
+          BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw "$APP_DIR/Info.plist" 2>/dev/null || echo "com.yourcompany.CrazyCattle3D")
+          BUNDLE_NAME=$(plutil -extract CFBundleName raw "$APP_DIR/Info.plist" 2>/dev/null || echo "CrazyCattle3D")
+          BUNDLE_VERSION=$(plutil -extract CFBundleVersion raw "$APP_DIR/Info.plist" 2>/dev/null || echo "1.0")
+          SHORT_VERSION=$(plutil -extract CFBundleShortVersionString raw "$APP_DIR/Info.plist" 2>/dev/null || echo "1.0")
+          
+          # Create a minimal Info.plist
+          echo "Creating minimal Info.plist"
+          cat > "$APP_DIR/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          <key>CFBundleExecutable</key>
+          <string>$EXECUTABLE_NAME</string>
+          <key>CFBundleIdentifier</key>
+          <string>$BUNDLE_ID</string>
+          <key>CFBundleName</key>
+          <string>$BUNDLE_NAME</string>
+          <key>CFBundleVersion</key>
+          <string>$BUNDLE_VERSION</string>
+          <key>CFBundleShortVersionString</key>
+          <string>$SHORT_VERSION</string>
+          <key>MinimumOSVersion</key>
+          <string>6.0</string>
+          <key>UIDeviceFamily</key>
+          <array>
+          <integer>1</integer>
+          <integer>2</integer>
+          </array>
+          <key>UIRequiredDeviceCapabilities</key>
+          <array>
+          <string>armv7</string>
+          </array>
+          <key>LSRequiresIPhoneOS</key>
+          <true/>
+          </dict>
+          </plist>
+          EOF
+          
+          # Set executable permissions
+          if [ -f "$APP_DIR/$EXECUTABLE_NAME" ]; then
+            chmod +x "$APP_DIR/$EXECUTABLE_NAME"
+          fi
+          
+          # Clean up problematic files
+          find Payload -name ".DS_Store" -delete
+          find Payload -name "ftm.dylib" -delete
+          
+          # Create the minimal IPA
+          cd ..
+          rm -rf CrazyCattle3D-iOS6-minimal.ipa
+          cd ios6-minimal
+          echo "Creating iOS 6 minimal IPA"
+          zip -qr ../CrazyCattle3D-iOS6-minimal.ipa Payload
+          cd ..
+          
+          echo "Finished creating iOS 6 minimal IPA"
+          ls -la CrazyCattle3D-iOS6-minimal.ipa
 
       - name: Upload Standard IPA
         uses: actions/upload-artifact@v4
         with:
-          name: CrazyCattle3D-iOS6-compatible
-          path: CrazyCattle3D-iOS6-compatible.ipa
+          name: CrazyCattle3D-iOS6
+          path: CrazyCattle3D-iOS6.ipa
           retention-days: 90
           
-      - name: Upload Enhanced IPA
+      - name: Upload Minimal IPA
         uses: actions/upload-artifact@v4
         with:
-          name: CrazyCattle3D-iOS6-enhanced
-          path: CrazyCattle3D-iOS6-enhanced.ipa
+          name: CrazyCattle3D-iOS6-minimal
+          path: CrazyCattle3D-iOS6-minimal.ipa
           retention-days: 90
